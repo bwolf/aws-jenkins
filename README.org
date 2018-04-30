@@ -1,0 +1,158 @@
+#+TITLE: CloudFormation templates for Jenkins on AWS
+
+* Introduction
+This repository contains several stacks for creating a Jenkins
+instance on AWS using CloudFormation templates.
+
+The design is a mix of durability and cost effectiveness. The
+templates are not designed with HA in mind (there are already
+solutions for this), because this would require
+a load balancer (ELB) which is not cheap. The storage of the Jenkins
+instance is on the other hand stored outside of EC2 and is therefore
+persistent between changes of the EC2 instance.
+
+Let's Encrypt can be enabled, to securely encrypt the traffic to
+Jenkins via HTTPS.
+
+The following CloudFormation templates are available and used:
+- Alert topic (SNS): ~alert.yml~
+- Hosted zone (Route53): ~zone.yml~
+- Virtual private network (VPC): ~vpc.yml~
+- Storage (EFS): ~storage.yml~
+- Jenkins (EC2): ~jenkins.yml~
+
+* Alert Topic (SNS), Optional
+Deploy Stack:
+#+BEGIN_SRC sh :results silent
+  aws cloudformation deploy --stack-name jenkins-alert --template-file $(pwd)/alert.yml \
+      --tags Stack=jenkins-alert \
+      --capabilities CAPABILITY_IAM \
+      --parameter-overrides Email=mail@domain.tld
+#+END_SRC
+
+* Hosted Zone (Route53), Optional but required for Let's Encrypt
+** Deploy Stack
+#+BEGIN_SRC sh :results silent
+  aws cloudformation deploy --stack-name sub-domain-tld \
+      --template-file $(pwd)/zone.yml \
+      --tags Stack=sub-domain-tld \
+      --capabilities CAPABILITY_IAM \
+      --parameter-overrides Domain=sub.domain.tld
+#+END_SRC
+
+** Update Name servers
+Retrieve the Route53 name servers for the zone:
+#+BEGIN_SRC sh :results silent
+  aws cloudformation describe-stacks --stack-name domain-tld \
+      --query 'Stacks[0].Outputs[1]'
+#+END_SRC
+
+Use the values to update the upstream DNS for this zone. Typically
+this is done by creating NS records for the subdomain prefix, where
+each NS record points to AWS Route 53 (the retrieved values).
+
+* VPC, Optional
+Deploy Stack:
+#+BEGIN_SRC sh :results silent
+  aws cloudformation deploy --stack-name jenkins-vpc --template-file $(pwd)/vpc.yml \
+      --tags Stack=jenkins-vpc
+#+END_SRC
+
+* EFS Storage
+Deploy stack:
+#+BEGIN_SRC sh :results silent
+  aws cloudformation deploy --stack-name jenkins-storage \
+      --template-file $(pwd)/storage.yml \
+      --tags Stack=jenkins-storage
+      --paremeter-overrides ParentAlertStack=jenkins-alert
+#+END_SRC
+
+* Jenkins (EC2)
+** SSH Keys
+Create SSH key pair (just once) for connecting to the EC2 instance.
+Store the generated key securely.
+
+#+BEGIN_SRC sh :results silent
+  aws ec2 create-key-pair --key-name Jenkins --query 'KeyMaterial' \
+      --output text > jenkins.pem
+  chmod 0400 jenkins.pem
+#+END_SRC
+
+** Deploy Stack
+Note: Remove the two parameters ~HostedZoneName~ and ~DnsName~ to omit the
+optional DNS registration with Route53.
+
+Note: /The following will block until the stack is provisioned./
+#+BEGIN_SRC sh :results silent
+  aws cloudformation deploy --stack-name jenkins-ec2 \
+      --template-file $(pwd)/jenkins.yml \
+      --tags Stack=jenkins-ec2 \
+      --capabilities CAPABILITY_IAM \
+      --parameter-overrides \
+      ParentAlertStack=jenkins-alert \
+      ParentStorageStack=jenkins-storage \
+      ParentVpcStack=jenkins-vpc \
+      KeyName=Jenkins \
+      EnableEc2Ssh=true \
+      HostedZoneName=sub.domain.tld \
+      DnsName=build.sub.domain.tld \
+      LetsEncryptEnable=false
+#+END_SRC
+
+** Finish Jenkins Setup
+Retrieve the public IP address of the EC2 instance:
+#+BEGIN_SRC sh :results silent
+  aws cloudformation describe-stacks --stack-name jenkins-ec2 \
+      --query 'Stacks[0].Outputs'
+#+END_SRC
+
+Connect to the instance via SSH.
+#+BEGIN_SRC sh
+  ssh -o StrictHostKeyChecking=no -o GlobalKnownHostsFile=/dev/null \
+      -o UserKnownHostsFile=/dev/null -i jenkins.pem -l ec2-user IP-ADDRESS
+#+END_SRC
+
+To unlock Jenkins, get the initial admin password:
+#+BEGIN_SRC sh
+  sudo less /var/lib/jenkins/secrets/initialAdminPassword
+#+END_SRC
+
+Open browser with http://ipaddress:8080 and paste the admin password into
+the corresponding input of the Jenkins setup instructions.
+
+Continue with the online Jenkins setup by providing the respective
+inputs to the setup wizard and finish the setup by creating the
+initial admin account.
+
+** Enable Let's Encrypt and disable SSH
+The following step assumes that no more SSH interactions are intended.
+By enabling Let's Encrypt support, the HTTP port 8080 will be
+disabled. A valid mail address should be supplied for Let's Encrypt.
+
+#+BEGIN_SRC sh :results silent
+  aws cloudformation update-stack --stack-name jenkins-ec2 \
+      --template-body file://$(pwd)/jenkins.yml \
+      --capabilities CAPABILITY_IAM \
+      --parameters \
+      ParameterKey=ParentStorageStack,UsePreviousValue=true \
+      ParameterKey=ParentVpcStack,UsePreviousValue=true \
+      ParameterKey=KeyName,UsePreviousValue=true \
+      ParameterKey=EnableEc2Ssh,ParameterValue=false \
+      ParameterKey=HostedZoneName,UsePreviousValue=true \
+      ParameterKey=DnsName,UsePreviousValue=true \
+      ParameterKey=LetsEncryptEnable,ParameterValue=true \
+      ParameterKey=LetsEncryptMailAddress,ParameterValue=valid.mail@address.tld
+#+END_SRC
+
+* Developer notes
+** RegionMap
+To update the region map:
+#+BEGIN_SRC sh :results silent
+  regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
+  for region in $regions; do
+      ami=$(aws --region $region ec2 describe-images \
+                --filters "Name=name,Values=amzn-ami-hvm-2017.09.1.20180115-x86_64-gp2" \
+                --query "Images[0].ImageId" --output "text");
+      printf "'$region':\n  AMI: '$ami'\\n";
+  done
+#+END_SRC
