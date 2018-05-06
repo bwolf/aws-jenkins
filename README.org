@@ -21,7 +21,7 @@ The following CloudFormation templates are available and used:
 - Storage (EFS): ~storage.yml~
 - Jenkins (EC2): ~jenkins.yml~
 
-#+BEGIN_SRC plantuml :file deps.png
+#+BEGIN_SRC plantuml :file deps.png :results silent
 artifact SNS
 artifact Route53
 artifact VPC
@@ -35,8 +35,7 @@ EC2 --> Route53
 EC2 --> SNS
 #+END_SRC
 
-#+RESULTS:
-[[file:deps.png]]
+[[./deps.png]]
 
 * Alert Topic (SNS), Optional
 Deploy Stack:
