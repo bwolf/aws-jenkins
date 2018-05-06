@@ -1,4 +1,3 @@
-/jenkins.pem
-/jenkins.txt
-/README.html
+/*.html
+/*.json
 /*.pem
