@@ -404,6 +404,7 @@ Resources:
             yum:
               amazon-efs-utils: []
               java-1.8.0-openjdk-devel: []
+              git: []
           commands:
             01_rm_jdk7:
               command: yum remove -y java-1.7.0-openjdk
