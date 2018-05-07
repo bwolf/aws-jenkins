@@ -402,6 +402,7 @@ Resources:
         prejenkins:
           packages:
             yum:
+              htop: []
               amazon-efs-utils: []
               java-1.8.0-openjdk-devel: []
               git: []
