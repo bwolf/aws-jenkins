@@ -551,6 +551,7 @@ Resources:
                 [unix_http_server]
                 file=/var/run/supervisor.sock
                 [supervisord]
+                user=root
                 logfile=/var/log/supervisord.log
                 logfile_maxbytes=50MB
                 logfile_backups=10
