@@ -1,6 +1,12 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >-
   Stack for managing a simple VPC consisting of a privaet and public network.
+Parameters:
+  AvailabilityZone:
+    Description: >-
+      The Availability Zone for the Volume. This must match the
+      Availability Zone of the EC2 instance.
+    Type: AWS::EC2::AvailabilityZone::Name
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -29,6 +35,7 @@ Resources:
   SubnetPublic:
     Type: AWS::EC2::Subnet
     Properties:
+      AvailabilityZone: !Ref AvailabilityZone
       VpcId: !Ref Vpc
       CidrBlock: 10.0.0.0/24
       Tags:
@@ -40,6 +47,7 @@ Resources:
   SubnetPrivate:
     Type: AWS::EC2::Subnet
     Properties:
+      AvailabilityZone: !Ref AvailabilityZone
       VpcId: !Ref Vpc
       CidrBlock: 10.0.16.0/24
       Tags:
@@ -161,13 +169,23 @@ Resources:
       CidrBlock: '0.0.0.0/0'
 
 Outputs:
+  AvailabilityZone:
+    Description: Availability Zone of the VPC.
+    Value: !Ref AvailabilityZone
+    Export:
+      Name: !Sub '${AWS::StackName}-AvailabilityZone'
   VpcId:
-    Description: Id of the VPC
+    Description: Id of the VPC.
     Value: !Ref Vpc
     Export:
       Name: !Sub '${AWS::StackName}-VpcId'
+  SubnetPrivateId:
+    Description: Id of the private subnet.
+    Value: !Ref SubnetPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetPrivateId'
   SubnetPublicId:
-    Description: Id of the public subnet
+    Description: Id of the public subnet.
     Value: !Ref SubnetPublic
     Export:
       Name: !Sub '${AWS::StackName}-SubnetPublicId'

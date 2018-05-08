@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >-
-  Stack for managing jenkins storage (EFS).
+  Stack for managing jenkins storage.
 Parameters:
   ParentAlertStack:
     Description: >-
@@ -8,63 +8,73 @@ Parameters:
       is queried for the '-TopicArn' export.
     Type: String
     Default: ''
+  ParentVpcStack:
+    Description: >-
+      Name of the parent Stack containing the VPC. The Stack is
+      queried for the '-AvailabilityZone' export.
+    Type: String
+  VolumeType:
+    Description: >-
+      The volume type. This can be gp2 for General Purpose SSD, io1
+      for Provisioned IOPS SSD, st1 for Throughput Optimized HDD, sc1
+      for Cold HDD, or standard for Magnetic volumes.
+    Type: String
+    AllowedValues: [standard, io1, gp2, sc1, st1]
+    Default: standard
+  Iops:
+    Description: >-
+      The desired amount of I/O operations per seconds. Only use for
+      certain volume types.
+    Type: String
+    Default: ''
+  Size:
+    Description: The size of the volume, in gibibytes.
+    Type: Number
+    Default: 50
 Conditions:
   HasAlertTopic:
     !Not [!Equals [!Ref ParentAlertStack, '']]
 Resources:
+
   Storage:
-    Type: AWS::EFS::FileSystem
+    Type: AWS::EC2::Volume
     Properties:
+      AvailabilityZone:
+        Fn::ImportValue:
+          !Sub '${ParentVpcStack}-AvailabilityZone'
       Encrypted: false
-      PerformanceMode: generalPurpose
-      FileSystemTags:
+      Iops: !Ref Iops
+      VolumeType: !Ref VolumeType
+      Size: !Ref Size
+      Tags:
       - Key: Name
         Value: !Ref AWS::StackId
       - Key: Content
         Value: jenkins-home
-
-  StoragePercentIoLimitTooHighAlarm:
-    Condition: HasAlertTopic
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: >-
-        Average IO utilization over last 10 minutes higher than 80%
-      Namespace: AWS/EFS
-      MetricName: PercentIOLimit
-      Statistic: Average
-      Period: 600
-      EvaluationPeriods: 1
-      ComparisonOperator: GreaterThanThreshold
-      Threshold: 80
-      AlarmActions:
-      - Fn::ImportValue: !Sub '${ParentAlertStack}-TopicArn'
-      Dimensions:
-      - Name: FileSystemId
-        Value: !Ref Storage
 
   StorageBurstCreditBalanceTooLowAlarm:
     Condition: HasAlertTopic
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: >-
-        EFS file system is running out of burst credits. You can
-        expect a significant performance drop in the next hour.
-      Namespace: AWS/EFS
-      MetricName: BurstCreditBalance
+        Volume is running out of burst credeits. Expect a significant
+        performance drop.
+      Namespace: AWS/EBS
+      MetricName: BurstBalance
       Statistic: Average
       Period: 600
       EvaluationPeriods: 1
       ComparisonOperator: LessThanThreshold
-      Threshold: 192416666667 # 192 GB in Bytes (last hour where you can burst at 100 MB/sec)
+      Threshold: 40
       AlarmActions:
       - Fn::ImportValue: !Sub '${ParentAlertStack}-TopicArn'
       Dimensions:
-      - Name: FileSystemId
+      - Name: VolumeId
         Value: !Ref Storage
 
 Outputs:
-  FileSystemId:
-    Description: Logical ID of the FileSystem.
+  VolumeId:
+    Description: Logical Id of the EBS volume
     Value: !Ref Storage
     Export:
-      Name: !Sub '${AWS::StackName}-FileSystemId'
+      Name: !Sub '${AWS::StackName}-VolumeId'

@@ -2,40 +2,52 @@
 
 * Introduction
 This repository contains several stacks for creating a Jenkins
-instance on AWS using CloudFormation templates.
+instance on AWS using [[https://aws.amazon.com/documentation/cloudformation/?id=docs_gateway][CloudFormation]] templates ([[https://en.wikipedia.org/wiki/Infrastructure_as_Code][infrastructure as
+code]]).
 
 The design is a mix of durability and cost effectiveness. The
-templates are not designed with HA in mind (there are already
-solutions for this), because this would require
-a load balancer (ELB) which is not cheap. The storage of the Jenkins
-instance is on the other hand stored outside of EC2 and is therefore
-persistent between changes of the EC2 instance.
+templates are not designed with [[https://en.wikipedia.org/wiki/High_availability][HA]] in mind (there are already
+solutions for this, search GitHub for example), because this would
+require a load balancer (ELB) and certain storage.
 
-Let's Encrypt can be enabled, to securely encrypt the traffic to
-Jenkins via HTTPS.
+The storage of this variant of Jenkins is stored outside of the
+instance template, allowing updates of the instance without pruning
+existent configurations. Previously, [[https://aws.amazon.com/de/efs/][EFS]] was used instead of [[https://aws.amazon.com/de/ebs/][EBS]],
+because it is more versatile and easier to maintain. Unfortunately its
+price is higher and it is not so performative.
 
-The following CloudFormation templates are available and used:
+[[https://letsencrypt.org][Let's Encrypt]], to securely encrypt the traffic to Jenkins via HTTPS.
+
+The following CloudFormation templates are available and each of
+these is deployed as Stack:
 - Alert topic (SNS): ~alert.yml~
 - Hosted zone (Route53): ~zone.yml~
 - Virtual private network (VPC): ~vpc.yml~
-- Storage (EFS): ~storage.yml~
+- Storage (EBS): ~storage.yml~
 - Jenkins (EC2): ~jenkins.yml~
 
 #+BEGIN_SRC plantuml :file deps.png :results silent
 artifact SNS
 artifact Route53
 artifact VPC
-artifact EFS
+artifact EBS
 artifact EC2
-EFS --> SNS
+EBS --> SNS
+EBS --> VPC
+EBS --> SNS
 EC2 --> SNS
-EC2 --> EFS
+EC2 --> EBS
 EC2 --> VPC
 EC2 --> Route53
 EC2 --> SNS
 #+END_SRC
 
 [[./deps.png]]
+
+* Customization
+Please consider investigation of your requirements before applying the
+templates blindly. Most templates are parameterized to allow easy
+adjustment to needs.
 
 * Alert Topic (SNS), Optional
 Deploy Stack:
@@ -71,16 +83,19 @@ each NS record points to AWS Route 53 (the retrieved values).
 Deploy Stack:
 #+BEGIN_SRC sh :results silent
   aws cloudformation deploy --stack-name jenkins-vpc --template-file $(pwd)/vpc.yml \
-      --tags Stack=jenkins-vpc
+      --tags Stack=jenkins-vpc \
+      AvailabilityZone=your-zone
 #+END_SRC
 
-* EFS Storage
+* Storage (EBS)
 Deploy stack:
 #+BEGIN_SRC sh :results silent
   aws cloudformation deploy --stack-name jenkins-storage \
       --template-file $(pwd)/storage.yml \
       --tags Stack=jenkins-storage
-      --paremeter-overrides ParentAlertStack=jenkins-alert
+      --paremeter-overrides \
+      ParentAlertStack=jenkins-alert \
+      ParentVpcStack=jenkins-vpc
 #+END_SRC
 
 * Jenkins (EC2)
@@ -108,6 +123,7 @@ Note: /The following will block until the stack is provisioned./
       ParentAlertStack=jenkins-alert \
       ParentStorageStack=jenkins-storage \
       ParentVpcStack=jenkins-vpc \
+      InstanceType=t2.small \
       KeyName=Jenkins \
       EnableEc2Ssh=true \
       HostedZoneName=sub.domain.tld \
@@ -150,10 +166,12 @@ disabled. A valid mail address should be supplied for Let's Encrypt.
       --template-body file://$(pwd)/jenkins.yml \
       --capabilities CAPABILITY_IAM \
       --parameters \
+      ParameterKey=ParentAlertStack,UsePreviousValue=true \
       ParameterKey=ParentStorageStack,UsePreviousValue=true \
       ParameterKey=ParentVpcStack,UsePreviousValue=true \
+      ParameterKey=InstanceType,UsePreviousValue=true \
       ParameterKey=KeyName,UsePreviousValue=true \
-      ParameterKey=EnableEc2Ssh,ParameterValue=false \
+      ParameterKey=EnableEc2Ssh,UsePreviousValue=true \
       ParameterKey=HostedZoneName,UsePreviousValue=true \
       ParameterKey=DnsName,UsePreviousValue=true \
       ParameterKey=LetsEncryptEnable,ParameterValue=true \

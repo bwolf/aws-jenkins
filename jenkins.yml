@@ -11,13 +11,19 @@ Parameters:
   ParentStorageStack:
     Description: >-
       Name of the parent Stack containing the EFS-Storage. The Stack
-      is queried for the '-FileSystemId' export.
+      is queried for the '-AvailabilityZone' and '-VolumeId' export.
     Type: String
+  JenkinsStorageDevice:
+    Description: >-
+      Device name of the EBS storage volume used to store the Jenkins
+      home directory. Typically this parameter can be unchanged.
+    Type: String
+    Default: '/dev/xvdj'
   ParentVpcStack:
     Description: >-
       Name of the parent Stack containing the VPC. The Stack is
-      queried for the '-VpcId' export and for the '-SubnetPublicId'
-      export.
+      queried for the '-VpcId', '-SubnetPublicId', and
+      '-AvailabilityZone' export. export.
     Type: String
   KeyName:
     Description: >-
@@ -206,31 +212,6 @@ Resources:
       - Key: Reach
         Value: private
 
-  StorageSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: jenkins
-      VpcId:
-        Fn::ImportValue:
-          !Sub '${ParentVpcStack}-VpcId'
-      SecurityGroupIngress:
-      - SourceSecurityGroupId: !Ref InstanceSecurityGroupPublic
-        FromPort: 2049
-        ToPort: 2049
-        IpProtocol: tcp
-
-  StorageMountTarget:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId:
-        Fn::ImportValue:
-          !Sub '${ParentStorageStack}-FileSystemId'
-      SubnetId:
-        Fn::ImportValue:
-          !Sub '${ParentVpcStack}-SubnetPublicId'
-      SecurityGroups:
-      - !Ref StorageSecurityGroup
-
   Ec2Logs:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -287,8 +268,8 @@ Resources:
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
-          default: !If [ HasLetsEncrypt, [earlystage, awslogs, awshub, prejenkins, jenkins, startjenkins, supervisor, traefik], [earlystage, awslogs, awshub, prejenkins, jenkins, startjenkins]]
-        earlystage:
+          default: !If [ HasLetsEncrypt, [update, awslogs, awshub, prejenkins, installjenkins, startjenkins, supervisor, traefik], [update, awslogs, awshub, prejenkins, installjenkins, startjenkins]]
+        update:
           commands:
             01_update:
               command: yum update -y
@@ -403,7 +384,6 @@ Resources:
           packages:
             yum:
               htop: []
-              amazon-efs-utils: []
               java-1.8.0-openjdk-devel: []
               git: []
           commands:
@@ -416,7 +396,7 @@ Resources:
             03_install_jenkins_key:
                command: rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io.key && touch /etc/have-jenkins-key
                test: '[ ! -f /etc/have-jenkins-key ]'
-        jenkins:
+        installjenkins:
           packages:
             yum:
               jenkins: []
@@ -427,16 +407,16 @@ Resources:
                 ensureRunning: false
         startjenkins:
           commands:
-            01_mount:
-              command:
-                Fn::Join:
-                  - ''
-                  - - 'mount -t efs '
-                    - Fn::ImportValue: !Sub '${ParentStorageStack}-FileSystemId'
-                    - ':/ '
-                    - '/var/lib/jenkins'
+            01_prepare_ebs:
+              command: !Sub 'mkfs -t ext4 ${JenkinsStorageDevice}'
+              test: !Sub 'if file -s ${JenkinsStorageDevice} | grep -q ": data"; then exit 0; else exit 1; fi'
+            02_mount_ebs:
+              command: !Sub 'mount ${JenkinsStorageDevice} /var/lib/jenkins'
               test: 'if mountpoint -q /var/lib/jenkins; then exit 1; else exit 0; fi'
-            02_permissions:
+            03_fstab:
+              command: !Sub 'echo ${JenkinsStorageDevice} /var/lib/jenkins ext4 defaults,nofail 0 2 >> /etc/fstab'
+              test: 'if grep ${JenkinsStorageDevice} /etc/fstab; then exit 1; else exit 0; fi'
+            04_permissions:
               command: chown jenkins:jenkins /var/lib/jenkins
           services:
             sysvinit:
@@ -665,10 +645,18 @@ Resources:
             04_refresh_supervisord:
               command: /usr/local/bin/supervisorctl update
     Properties:
+      AvailabilityZone:
+        Fn::ImportValue:
+          !Sub '${ParentVpcStack}-AvailabilityZone'
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
       InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref InstanceProfile
       KeyName: !Ref KeyName
+      Volumes:
+      - Device: !Ref JenkinsStorageDevice
+        VolumeId:
+          Fn::ImportValue:
+            !Sub '${ParentStorageStack}-VolumeId'
       NetworkInterfaces:
       - AssociatePublicIpAddress: true
         DeviceIndex: '0'
@@ -727,11 +715,23 @@ Resources:
 
 Outputs:
   InstanceId:
-    Description: Instance Id of newly created instance
+    Description: Instance Id of newly created instance.
     Value: !Ref Ec2Instance
+  AvailabilityZone:
+    Description: The Availability Zone of the instance.
+    Value: !GetAtt Ec2Instance.AvailabilityZone
+  PrivateDnsName:
+    Description: The private DNS name of the instance.
+    Value: !GetAtt Ec2Instance.PrivateDnsName
+  PublicDnsName:
+    Description: The public DNS name of the instance.
+    Value: !GetAtt Ec2Instance.PublicDnsName
+  PrivateIp:
+    Description: Private IP of the instance.
+    Value: !GetAtt Ec2Instance.PrivateIp
   PublicIp:
-    Description: Public IP of the instance
+    Description: Public IP of the instance.
     Value: !Ref IPAddress
   PublicUrl:
-    Description: Public URL of the instance
+    Description: Public URL of the instance.
     Value: !If [HasLetsEncrypt, !Sub 'https://${DnsName}/', !Sub 'http://${DnsName}:8080/']
