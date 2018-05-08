@@ -47,7 +47,8 @@ EC2 --> SNS
 * Customization
 Please consider investigation of your requirements before applying the
 templates blindly. Most templates are parameterized to allow easy
-adjustment to needs.
+adjustment to needs. Check the [[https://calculator.s3.amazonaws.com/index.html][Simple Monthly Calculator]] to estimate
+the monthly costs.
 
 * Alert Topic (SNS), Optional
 Deploy Stack:
